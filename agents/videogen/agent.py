@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 
@@ -30,7 +31,7 @@ async def generate_clip(
     Returns:
         Tuple of (mp4_bytes, metadata_dict).
     """
-    with trace_span("videogen", "generate_clip", session_id=session_id) as span:
+    def _sync_generate():
         client = get_client()
 
         refs = []
@@ -74,8 +75,14 @@ async def generate_clip(
             "ref_frame_count": len(refs),
             "prompt_length": len(prompt_text),
         }
+        return mp4_bytes, metadata
+
+    with trace_span("videogen", "generate_clip", session_id=session_id) as span:
+        mp4_bytes, metadata = await asyncio.to_thread(_sync_generate)
         span["payload"].update(metadata)
         logger.info(
-            "Veo generation completed in %.1fs (model=%s)", latency_s, _MODEL
+            "Veo generation completed in %.1fs (model=%s)",
+            metadata["latency_s"],
+            _MODEL,
         )
         return mp4_bytes, metadata

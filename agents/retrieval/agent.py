@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from pathlib import Path
@@ -71,7 +72,7 @@ async def resolve_query(
             f"CANDIDATES:\n{json.dumps(candidates, indent=2)}"
         )
 
-        result = gmi_reason(SYSTEM_PROMPT, user_block)
+        result = await asyncio.to_thread(gmi_reason, SYSTEM_PROMPT, user_block)
         span["payload"]["model"] = "deepseek-ai/DeepSeek-V4-Flash"
         span["payload"]["intent_clarity"] = result.get("intent_clarity")
         span["payload"]["change_type"] = result.get("change_type")

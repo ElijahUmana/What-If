@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from pathlib import Path
@@ -50,7 +51,7 @@ async def generate_commentary(
     ) as span:
         feed = _build_feed(events, summaries, match_state)
 
-        text = gmi_chat(PERSONA_PROMPT, feed)
+        text = await asyncio.to_thread(gmi_chat, PERSONA_PROMPT, feed)
         text = text.strip()
         span["payload"]["model"] = "deepseek-ai/DeepSeek-V4-Flash"
         span["payload"]["commentary_length"] = len(text)

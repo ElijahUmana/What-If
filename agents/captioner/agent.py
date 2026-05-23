@@ -22,12 +22,10 @@ _MODEL = "gemini-3.1-flash-lite"
 
 
 async def caption_frame(frame_bytes: bytes, session_id: str = "") -> dict:
-    """Caption a single JPEG frame and return structured tags.
+    """Caption a single JPEG frame and return structured tags."""
+    import asyncio
 
-    Returns:
-        {caption, ball_visible, players_visible_count, scene_type, confidence}
-    """
-    with trace_span("captioner", "caption_frame", session_id=session_id) as span:
+    def _sync_call():
         client = get_client()
         response = client.models.generate_content(
             model=_MODEL,
@@ -48,7 +46,10 @@ async def caption_frame(frame_bytes: bytes, session_id: str = "") -> dict:
                 temperature=0.2,
             ),
         )
-        result = json.loads(response.text)
+        return json.loads(response.text)
+
+    with trace_span("captioner", "caption_frame", session_id=session_id) as span:
+        result = await asyncio.to_thread(_sync_call)
         span["payload"]["model"] = _MODEL
         span["payload"]["scene_type"] = result.get("scene_type")
         return result

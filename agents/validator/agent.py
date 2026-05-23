@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from pathlib import Path
@@ -38,7 +39,7 @@ async def validate_clip(
          delta_quality, extra_changes_observed, reasoning,
          verdict: "ok"|"regenerate"|"reject", verdict_reasons: [...]}
     """
-    with trace_span("validator", "validate_fidelity", session_id=session_id) as span:
+    def _sync_fidelity():
         context_text = (
             f"USER_PROMPT: {user_prompt}\n\n"
             f"REAL_EVENT: {json.dumps(real_event)}\n\n"
@@ -66,7 +67,10 @@ async def validate_clip(
                 temperature=0.2,
             ),
         )
-        result = json.loads(response.text)
+        return json.loads(response.text)
+
+    with trace_span("validator", "validate_fidelity", session_id=session_id) as span:
+        result = await asyncio.to_thread(_sync_fidelity)
         span["payload"]["model"] = _MODEL
         span["payload"]["verdict"] = result.get("verdict")
         return result
@@ -86,9 +90,7 @@ async def validate_continuity(
          player_count_plausible, physical_artifacts,
          reasoning, verdict, verdict_reasons}
     """
-    with trace_span(
-        "validator", "validate_continuity", session_id=session_id
-    ) as span:
+    def _sync_continuity():
         parts: list[types.Part] = []
 
         # Add reference frames
@@ -124,7 +126,12 @@ async def validate_continuity(
                 temperature=0.2,
             ),
         )
-        result = json.loads(response.text)
+        return json.loads(response.text)
+
+    with trace_span(
+        "validator", "validate_continuity", session_id=session_id
+    ) as span:
+        result = await asyncio.to_thread(_sync_continuity)
         span["payload"]["model"] = _MODEL
         span["payload"]["verdict"] = result.get("verdict")
         span["payload"]["ref_count"] = len(reference_frames)

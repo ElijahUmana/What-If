@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from pathlib import Path
@@ -34,7 +35,7 @@ async def identify_match(
          away_kit_color_primary, away_kit_color_secondary, away_gk_kit_color,
          stadium, confidence, unknown}
     """
-    with trace_span("setup", "identify_match", session_id=session_id) as span:
+    def _sync_call():
         context_text = (
             f"VIDEO_TITLE: {video_title}\n\n"
             f"VIDEO_DESCRIPTION: {video_description[:500]}"
@@ -62,7 +63,10 @@ async def identify_match(
                 temperature=0.2,
             ),
         )
-        result = json.loads(response.text)
+        return json.loads(response.text)
+
+    with trace_span("setup", "identify_match", session_id=session_id) as span:
+        result = await asyncio.to_thread(_sync_call)
         span["payload"]["model"] = _MODEL
         span["payload"]["confidence"] = result.get("confidence")
         span["payload"]["unknown"] = result.get("unknown", False)

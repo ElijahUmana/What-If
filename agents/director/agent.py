@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from pathlib import Path
@@ -57,7 +58,7 @@ async def compose_veo_brief(
         context_parts.append(f"VEO_SCHEMA:\n{VEO_SCHEMA}")
         user_prompt = "\n\n".join(context_parts)
 
-        result = gmi_reason(SYSTEM_PROMPT, user_prompt)
+        result = await asyncio.to_thread(gmi_reason, SYSTEM_PROMPT, user_prompt)
         span["payload"]["model"] = "deepseek-ai/DeepSeek-V4-Flash"
         span["payload"]["frame_count"] = len(window_frames[:8])
         span["payload"]["is_regeneration"] = validator_feedback is not None

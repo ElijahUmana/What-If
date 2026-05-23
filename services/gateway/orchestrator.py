@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 # Active ingest agents per session
 _ingest_agents: dict[str, IngestAgent] = {}
 _perception_tasks: dict[str, asyncio.Task] = {}
+_debug_errors: list[str] = []
 
 WORK_DIR = os.environ.get("WORK_DIR", "/tmp/whatif")
 
@@ -192,7 +193,10 @@ async def _perception_loop(session_id: str, agent: IngestAgent) -> None:
                         session_id, "caption.created", caption_entry
                     )
                 except Exception as e:
-                    logger.warning("Caption error for %s: %s", session_id, e)
+                    import traceback
+                    err = f"Caption error: {type(e).__name__}: {e}\n{traceback.format_exc()}"
+                    logger.warning(err)
+                    _debug_errors.append(err)
             last_caption_pts = current_pts
 
         # --- Summarise every 30 seconds of wall-clock time ---
@@ -220,24 +224,26 @@ async def _perception_loop(session_id: str, agent: IngestAgent) -> None:
 
             concat_path = f"/tmp/whatif_window_{session_id}.mp4"
             concat_input = "|".join(str(c) for c in recent_chunks)
-            proc = subprocess.run(
-                [
-                    "ffmpeg",
-                    "-y",
-                    "-i",
-                    f"concat:{concat_input}",
-                    "-t",
-                    "30",
-                    "-c:v",
-                    "libx264",
-                    "-preset",
-                    "ultrafast",
-                    "-c:a",
-                    "aac",
-                    concat_path,
-                ],
-                capture_output=True,
-                timeout=15,
+            proc = await asyncio.to_thread(
+                lambda: subprocess.run(
+                    [
+                        "ffmpeg",
+                        "-y",
+                        "-i",
+                        f"concat:{concat_input}",
+                        "-t",
+                        "30",
+                        "-c:v",
+                        "libx264",
+                        "-preset",
+                        "ultrafast",
+                        "-c:a",
+                        "aac",
+                        concat_path,
+                    ],
+                    capture_output=True,
+                    timeout=15,
+                )
             )
             if proc.returncode != 0 or not os.path.exists(concat_path):
                 logger.warning(

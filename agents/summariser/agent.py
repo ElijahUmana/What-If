@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from pathlib import Path
@@ -28,7 +29,7 @@ async def summarise_window(
     Returns:
         {narrative, structured, events, self_critique}
     """
-    with trace_span("summariser", "summarise_window", session_id=session_id) as span:
+    def _sync_call():
         client = get_client()
         prompt_with_meta = (
             SYSTEM_PROMPT + "\n\nMATCH_META: " + json.dumps(match_meta)
@@ -52,7 +53,10 @@ async def summarise_window(
                 temperature=0.2,
             ),
         )
-        result = json.loads(response.text)
+        return json.loads(response.text)
+
+    with trace_span("summariser", "summarise_window", session_id=session_id) as span:
+        result = await asyncio.to_thread(_sync_call)
         span["payload"]["model"] = _MODEL
         span["payload"]["event_count"] = len(result.get("events", []))
         span["payload"]["should_expand"] = result.get("self_critique", {}).get(
