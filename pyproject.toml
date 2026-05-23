@@ -1,0 +1,20 @@
+[project]
+name = "whatif"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = [
+    "google-genai>=1.0",
+    "openai>=1.0",
+    "fastapi>=0.115",
+    "uvicorn[standard]",
+    "websockets",
+    "pydantic>=2.0",
+    "psycopg[binary]>=3.0",
+    "pgvector>=0.3",
+    "redis>=5.0",
+    "nats-py>=2.0",
+    "watchdog>=6.0",
+    "rocketride>=1.1",
+    "ulid-py>=1.0",
+    "Pillow>=10.0",
+]
