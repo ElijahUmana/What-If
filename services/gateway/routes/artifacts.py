@@ -24,6 +24,11 @@ async def get_timeline(session_id: str):
     }
 
 
+@router.get("/sessions/{session_id}/prompts")
+async def list_prompts(session_id: str):
+    return state.prompts.get(session_id, [])
+
+
 @router.get("/clips/{clip_path:path}")
 async def serve_clip(clip_path: str):
     full_path = f"/tmp/whatif_storage/sessions/{clip_path}"

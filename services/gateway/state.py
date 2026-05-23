@@ -10,6 +10,7 @@ summaries: dict[str, list[dict]] = {}
 events: dict[str, list[dict]] = {}
 match_states: dict[str, dict] = {}
 queries: dict[str, list[dict]] = {}
+prompts: dict[str, list[dict]] = {}
 clips: dict[str, list[dict]] = {}
 traces: dict[str, list[dict]] = {}
 commentary: dict[str, list[dict]] = {}

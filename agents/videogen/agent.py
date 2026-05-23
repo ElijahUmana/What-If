@@ -20,6 +20,10 @@ _MODEL = "veo-3.1-fast-generate-preview"
 async def generate_clip(
     prompt_text: str,
     reference_frames: list[bytes],
+    duration_s: int = 8,
+    resolution: str = "720p",
+    aspect_ratio: str = "16:9",
+    seed: int | None = None,
     session_id: str = "",
 ) -> tuple[bytes, dict]:
     """Generate a counterfactual video clip via Veo 3.1.
@@ -27,6 +31,10 @@ async def generate_clip(
     Args:
         prompt_text: Natural-language Veo prompt (from prompt_builder).
         reference_frames: Up to 3 JPEG reference frames for visual continuity.
+        duration_s: Generated clip length. Veo reference-image generations use 8s.
+        resolution: Output resolution, e.g. "720p" or "1080p".
+        aspect_ratio: Output aspect ratio.
+        seed: Optional Veo seed, if supported by the selected model.
 
     Returns:
         Tuple of (mp4_bytes, metadata_dict).
@@ -45,14 +53,19 @@ async def generate_clip(
                 )
             )
 
+        config_kwargs = {
+            "reference_images": refs if refs else None,
+            "aspect_ratio": aspect_ratio,
+            "resolution": resolution,
+            "duration_seconds": duration_s,
+        }
+        if seed is not None:
+            config_kwargs["seed"] = seed
+
         operation = client.models.generate_videos(
             model=_MODEL,
             prompt=prompt_text,
-            config=types.GenerateVideosConfig(
-                reference_images=refs if refs else None,
-                aspect_ratio="16:9",
-                resolution="720p",
-            ),
+            config=types.GenerateVideosConfig(**config_kwargs),
         )
 
         started = time.time()
@@ -74,6 +87,10 @@ async def generate_clip(
             "latency_s": latency_s,
             "ref_frame_count": len(refs),
             "prompt_length": len(prompt_text),
+            "duration_s": duration_s,
+            "resolution": resolution,
+            "aspect_ratio": aspect_ratio,
+            "seed": seed,
         }
         return mp4_bytes, metadata
 

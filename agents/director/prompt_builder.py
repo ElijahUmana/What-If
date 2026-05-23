@@ -2,14 +2,25 @@
 
 from __future__ import annotations
 
+from typing import Any
 
-def build_veo_prompt(brief: dict) -> str:
+from agents.director.schema import VeoBrief
+
+
+def _as_dict(brief: VeoBrief | dict[str, Any]) -> dict[str, Any]:
+    if isinstance(brief, VeoBrief):
+        return brief.model_dump()
+    return brief
+
+
+def build_veo_prompt(brief: VeoBrief | dict[str, Any]) -> str:
     """Convert a structured Veo brief dict into a single natural-language prompt.
 
     The output concatenates: SCENE, CONTINUITY, WHAT ACTUALLY HAPPENED (negative),
     WHAT IF (positive), CONTINUATION beats, AUDIO, CAMERA, AVOID.
     Kept under ~1024 tokens by being concise in each section.
     """
+    brief = _as_dict(brief)
     sections: list[str] = []
 
     # SCENE

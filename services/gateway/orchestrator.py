@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 
@@ -19,8 +21,9 @@ from agents.summariser.agent import summarise_window
 from agents.retrieval.agent import resolve_query
 from agents.director.agent import compose_veo_brief
 from agents.director.prompt_builder import build_veo_prompt
+from agents.director.schema import ReferenceFrame, VeoBrief
 from agents.videogen.agent import generate_clip
-from agents.validator.agent import validate_clip
+from agents.validator.agent import validate_clip, validate_continuity
 from agents.commentary.agent import generate_commentary
 from agents.setup.agent import identify_match
 from agents._lib.storage import store
@@ -287,6 +290,254 @@ async def _run_summary(session_id: str, agent: IngestAgent, current_pts: int) ->
 # ---------------------------------------------------------------------------
 
 
+def _manual_resolution(query_text: str, anchor_pts_ms: int) -> dict:
+    return {
+        "anchor_id": f"manual_{anchor_pts_ms}",
+        "anchor_pts_ms": anchor_pts_ms,
+        "window_start_ms": max(0, anchor_pts_ms - 15000),
+        "window_end_ms": anchor_pts_ms + 10000,
+        "change_type": "explicit_anchor",
+        "entities_referenced": [],
+        "intent_clarity": "anchored",
+        "reasoning": "User supplied anchor_pts_ms; retrieval was bypassed.",
+        "user_prompt": query_text,
+    }
+
+
+def _reference_role_hint(pts_ms: int, anchor_pts_ms: int, index: int) -> str:
+    if index == 0:
+        return "stadium_lighting_ref"
+    if abs(pts_ms - anchor_pts_ms) <= 1000:
+        return "divergence_frame_camera_lock"
+    if pts_ms < anchor_pts_ms:
+        return "pre_change_frame"
+    return "continuation_context"
+
+
+def _build_reference_frames(
+    window: list[dict], anchor_pts_ms: int, max_frames: int = 8
+) -> list[ReferenceFrame]:
+    if not window:
+        return []
+
+    def closest(target_pts_ms: int) -> dict:
+        return min(
+            window,
+            key=lambda frame: abs(frame.get("pts_ms", 0) - target_pts_ms),
+        )
+
+    targets = [
+        window[0],
+        closest(max(0, anchor_pts_ms - 1000)),
+        closest(anchor_pts_ms),
+        closest(anchor_pts_ms + 2000),
+        window[-1],
+    ]
+
+    step = max(1, len(window) // max(1, max_frames))
+    targets.extend(window[i] for i in range(0, len(window), step))
+
+    unique: list[dict] = []
+    seen_pts: set[int] = set()
+    for frame in targets:
+        pts_ms = int(frame.get("pts_ms", 0))
+        if pts_ms in seen_pts:
+            continue
+        seen_pts.add(pts_ms)
+        unique.append(frame)
+        if len(unique) >= max_frames:
+            break
+
+    return [
+        ReferenceFrame(
+            id=f"rf_{index:03d}_{int(frame.get('pts_ms', 0))}",
+            pts_ms=int(frame.get("pts_ms", 0)),
+            role_hint=_reference_role_hint(
+                int(frame.get("pts_ms", 0)), anchor_pts_ms, index
+            ),
+            jpeg_bytes=frame["jpeg_bytes"],
+        )
+        for index, frame in enumerate(unique)
+    ]
+
+
+def _selected_reference_frames(
+    frames: list[ReferenceFrame], brief: VeoBrief, max_frames: int = 3
+) -> tuple[list[bytes], list[dict]]:
+    by_id = {frame.id: frame for frame in frames}
+    selected: list[ReferenceFrame] = []
+    selected_roles: dict[str, str] = {}
+    seen: set[str] = set()
+
+    for selection in brief.selected_reference_frames:
+        frame = by_id.get(selection.id)
+        if frame is None or frame.id in seen:
+            continue
+        selected.append(frame)
+        selected_roles[frame.id] = selection.role
+        seen.add(frame.id)
+        if len(selected) >= max_frames:
+            break
+
+    for frame in frames:
+        if len(selected) >= max_frames:
+            break
+        if frame.id in seen:
+            continue
+        selected.append(frame)
+        selected_roles[frame.id] = "fallback_reference"
+        seen.add(frame.id)
+
+    metadata = [
+        {**frame.metadata(), "selected_role": selected_roles.get(frame.id, "")}
+        for frame in selected
+    ]
+    return [frame.jpeg_bytes for frame in selected], metadata
+
+
+def _store_prompt_artifact(
+    session_id: str,
+    query_id: str,
+    attempt: int,
+    user_prompt: str,
+    resolved: dict,
+    brief: VeoBrief,
+    veo_prompt: str,
+    reference_frames: list[ReferenceFrame],
+    selected_reference_frame_metadata: list[dict],
+) -> str:
+    payload = {
+        "query_id": query_id,
+        "attempt": attempt,
+        "user_prompt": user_prompt,
+        "resolved": resolved,
+        "brief": brief.model_dump(),
+        "veo_prompt": veo_prompt,
+        "reference_frames": [frame.metadata() for frame in reference_frames],
+        "selected_reference_frames": selected_reference_frame_metadata,
+    }
+    filename = f"{query_id}_attempt_{attempt}.json"
+    uri = store(
+        session_id,
+        "prompts",
+        filename,
+        json.dumps(payload, indent=2).encode("utf-8"),
+    )
+    state.prompts.setdefault(session_id, []).append(
+        {
+            "query_id": query_id,
+            "attempt": attempt,
+            "storage_uri": uri,
+            "selected_reference_frames": selected_reference_frame_metadata,
+            "prompt_preview": veo_prompt[:300],
+            "timestamp": time.time(),
+        }
+    )
+    return uri
+
+
+def _sample_clip_frames(clip_bytes: bytes, max_frames: int = 3) -> list[bytes]:
+    timestamps = [0.5, 3.5, 6.5][:max_frames]
+    frames: list[bytes] = []
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_path = Path(temp_dir)
+        clip_path = temp_path / "clip.mp4"
+        clip_path.write_bytes(clip_bytes)
+
+        for index, timestamp in enumerate(timestamps):
+            out_path = temp_path / f"frame_{index}.jpg"
+            proc = subprocess.run(
+                [
+                    "ffmpeg",
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-y",
+                    "-ss",
+                    str(timestamp),
+                    "-i",
+                    str(clip_path),
+                    "-frames:v",
+                    "1",
+                    str(out_path),
+                ],
+                capture_output=True,
+                timeout=20,
+            )
+            if proc.returncode == 0 and out_path.exists():
+                frames.append(out_path.read_bytes())
+            else:
+                _debug_errors.append(
+                    "ffmpeg validation frame sample failed: "
+                    + proc.stderr.decode(errors="replace")[:300]
+                )
+    return frames
+
+
+def _combine_validation_verdicts(
+    fidelity: dict,
+    continuity: dict | None,
+    warnings: list[str],
+) -> dict:
+    severity = {"ok": 0, "regenerate": 1, "reject": 2}
+    verdict = fidelity.get("verdict", "ok")
+    reasons = list(fidelity.get("verdict_reasons", []))
+
+    if continuity is not None:
+        continuity_verdict = continuity.get("verdict", "ok")
+        if severity.get(continuity_verdict, 0) > severity.get(verdict, 0):
+            verdict = continuity_verdict
+        reasons.extend(continuity.get("verdict_reasons", []))
+
+    combined = {
+        **fidelity,
+        "verdict": verdict,
+        "verdict_reasons": reasons,
+        "fidelity": fidelity,
+        "continuity": continuity,
+    }
+    if warnings:
+        combined["validation_warnings"] = warnings
+    return combined
+
+
+async def _validate_clip_suite(
+    clip_bytes: bytes,
+    user_prompt: str,
+    real_event: dict,
+    brief: VeoBrief,
+    reference_frame_bytes: list[bytes],
+    session_id: str,
+) -> dict:
+    fidelity_task = asyncio.create_task(
+        validate_clip(
+            clip_bytes=clip_bytes,
+            user_prompt=user_prompt,
+            real_event=real_event,
+            counterfactual=brief.counterfactual_delta.model_dump(),
+            session_id=session_id,
+        )
+    )
+
+    sample_frames = await asyncio.to_thread(_sample_clip_frames, clip_bytes)
+    warnings: list[str] = []
+    continuity_result: dict | None = None
+    if sample_frames and reference_frame_bytes:
+        continuity_result = await validate_continuity(
+            reference_frames=reference_frame_bytes,
+            clip_sample_frames=sample_frames,
+            continuity_brief=brief.continuity.model_dump(),
+            session_id=session_id,
+        )
+    else:
+        warnings.append("continuity validation skipped: no sampled clip frames")
+
+    fidelity_result = await fidelity_task
+    return _combine_validation_verdicts(
+        fidelity_result, continuity_result, warnings
+    )
+
+
 async def handle_whatif(
     session_id: str,
     query_id: str,
@@ -314,14 +565,17 @@ async def handle_whatif(
             if latest:
                 live_pts = latest["pts_ms"]
 
-        resolved = await resolve_query(
-            text,
-            events_list,
-            summaries_list,
-            ms,
-            live_now_pts_ms=live_pts,
-            session_id=session_id,
-        )
+        if anchor_pts_ms is not None:
+            resolved = _manual_resolution(text, anchor_pts_ms)
+        else:
+            resolved = await resolve_query(
+                text,
+                events_list,
+                summaries_list,
+                ms,
+                live_now_pts_ms=live_pts,
+                session_id=session_id,
+            )
 
         # Update the query record
         for q in state.queries.get(session_id, []):
@@ -338,7 +592,7 @@ async def handle_whatif(
         )
 
         # Gather reference frames from the ring buffer around the anchor
-        ref_frames_bytes: list[bytes] = []
+        reference_frames: list[ReferenceFrame] = []
         if agent:
             anchor = resolved.get("anchor_pts_ms", 0)
             window_start = resolved.get(
@@ -347,11 +601,12 @@ async def handle_whatif(
             window_end = resolved.get("window_end_ms", anchor + 10000)
             window = agent.frame_ring.window(window_start, window_end)
             if window:
-                step = max(1, len(window) // 4)
-                ref_frames_bytes = [
-                    window[i]["jpeg_bytes"]
-                    for i in range(0, len(window), step)
-                ][:4]
+                reference_frames = _build_reference_frames(window, anchor)
+
+        if not reference_frames:
+            raise RuntimeError(
+                "No reference frames available for Veo generation; refusing blind text-to-video fallback."
+            )
 
         # Find the anchor event
         anchor_event: dict = {}
@@ -373,16 +628,17 @@ async def handle_whatif(
 
         brief = await compose_veo_brief(
             query={"text": text, **resolved},
-            anchor_event=anchor_event if anchor_event else {"type": "unknown", "description": text},
-            window_frames=ref_frames_bytes,
+            anchor_event=(
+                anchor_event
+                if anchor_event
+                else {"type": "unknown", "description": text}
+            ),
+            window_frames=reference_frames,
             captions=window_captions if window_captions else [{"text": text}],
             summary=summaries_list[-1] if summaries_list else {"narrative": text},
             match_state=ms if ms else {"home_team": "Home", "away_team": "Away"},
             session_id=session_id,
         )
-
-        if not brief or not isinstance(brief, dict):
-            brief = {"counterfactual_delta": {"beat_description": text}, "continuation_beats": [{"duration_s": 8, "description": text}], "scene": {}, "continuity": {}, "real_event": {"description": ""}, "audio": {"crowd": "cheering"}, "camera": {"persona": "broadcast", "movement": "pan"}, "negative": []}
 
         # ---- Stage 3: Generate ----
         await state.broadcast(
@@ -392,11 +648,29 @@ async def handle_whatif(
         )
 
         veo_prompt = build_veo_prompt(brief)
-        if not veo_prompt:
-            veo_prompt = f"A football match scene. {text} Broadcast camera angle, realistic, stadium atmosphere."
+        (
+            generation_reference_bytes,
+            selected_reference_frame_metadata,
+        ) = _selected_reference_frames(reference_frames, brief)
+        prompt_artifact_uri = _store_prompt_artifact(
+            session_id=session_id,
+            query_id=query_id,
+            attempt=1,
+            user_prompt=text,
+            resolved=resolved,
+            brief=brief,
+            veo_prompt=veo_prompt,
+            reference_frames=reference_frames,
+            selected_reference_frame_metadata=selected_reference_frame_metadata,
+        )
 
         clip_bytes, gen_meta = await generate_clip(
-            veo_prompt, ref_frames_bytes, session_id=session_id
+            veo_prompt,
+            generation_reference_bytes,
+            duration_s=brief.model_params.duration_s,
+            resolution=brief.model_params.resolution,
+            seed=brief.model_params.seed,
+            session_id=session_id,
         )
 
         # ---- Stage 4: Validate ----
@@ -406,11 +680,12 @@ async def handle_whatif(
             {"query_id": query_id, "stage": "validating"},
         )
 
-        verdict = await validate_clip(
+        verdict = await _validate_clip_suite(
             clip_bytes=clip_bytes,
             user_prompt=text,
             real_event=anchor_event,
-            counterfactual=brief.get("counterfactual_delta", {}),
+            brief=brief,
+            reference_frame_bytes=generation_reference_bytes,
             session_id=session_id,
         )
 
@@ -421,18 +696,50 @@ async def handle_whatif(
                 "query.progress",
                 {"query_id": query_id, "stage": "regenerating"},
             )
-            feedback_text = "; ".join(
-                verdict.get("verdict_reasons", ["improve quality"])
+            brief = await compose_veo_brief(
+                query={"text": text, **resolved},
+                anchor_event=(
+                    anchor_event
+                    if anchor_event
+                    else {"type": "unknown", "description": text}
+                ),
+                window_frames=reference_frames,
+                captions=window_captions if window_captions else [{"text": text}],
+                summary=summaries_list[-1] if summaries_list else {"narrative": text},
+                match_state=ms if ms else {"home_team": "Home", "away_team": "Away"},
+                validator_feedback=verdict,
+                session_id=session_id,
             )
-            retry_prompt = veo_prompt + "\nFEEDBACK: " + feedback_text
+            veo_prompt = build_veo_prompt(brief)
+            (
+                generation_reference_bytes,
+                selected_reference_frame_metadata,
+            ) = _selected_reference_frames(reference_frames, brief)
+            prompt_artifact_uri = _store_prompt_artifact(
+                session_id=session_id,
+                query_id=query_id,
+                attempt=2,
+                user_prompt=text,
+                resolved=resolved,
+                brief=brief,
+                veo_prompt=veo_prompt,
+                reference_frames=reference_frames,
+                selected_reference_frame_metadata=selected_reference_frame_metadata,
+            )
             clip_bytes, gen_meta = await generate_clip(
-                retry_prompt, ref_frames_bytes, session_id=session_id
+                veo_prompt,
+                generation_reference_bytes,
+                duration_s=brief.model_params.duration_s,
+                resolution=brief.model_params.resolution,
+                seed=brief.model_params.seed,
+                session_id=session_id,
             )
-            verdict = await validate_clip(
+            verdict = await _validate_clip_suite(
                 clip_bytes=clip_bytes,
                 user_prompt=text,
                 real_event=anchor_event,
-                counterfactual=brief.get("counterfactual_delta", {}),
+                brief=brief,
+                reference_frame_bytes=generation_reference_bytes,
                 session_id=session_id,
             )
 
@@ -443,9 +750,15 @@ async def handle_whatif(
             "id": f"cl_{query_id}",
             "query_id": query_id,
             "storage_uri": clip_path,
-            "duration_ms": int(gen_meta.get("latency_s", 8) * 1000),
+            "duration_ms": int(
+                gen_meta.get("duration_s", brief.model_params.duration_s) * 1000
+            ),
             "prompt": text,
+            "prompt_text": text,
+            "prompt_artifact_uri": prompt_artifact_uri,
+            "selected_reference_frames": selected_reference_frame_metadata,
             "verdict": verdict.get("verdict", "ok"),
+            "validation": verdict,
             "status": "ready",
         }
         state.clips.setdefault(session_id, []).append(clip_entry)

@@ -3,9 +3,9 @@
 ```json
 {
   "selected_reference_frames": [
-    { "uri": "gs://...", "role": "pre_change_frame", "pts_ms": 1452045 },
-    { "uri": "gs://...", "role": "camera_angle_lock", "pts_ms": 1452545 },
-    { "uri": "gs://...", "role": "stadium_lighting_ref", "pts_ms": 1451045 }
+    { "id": "rf_001_1452045", "role": "pre_change_frame", "pts_ms": 1452045 },
+    { "id": "rf_002_1452545", "role": "camera_angle_lock", "pts_ms": 1452545 },
+    { "id": "rf_000_1451045", "role": "stadium_lighting_ref", "pts_ms": 1451045 }
   ],
 
   "scene": {

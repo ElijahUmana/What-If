@@ -33,6 +33,7 @@ async def create_session(req: CreateSessionRequest):
     state.summaries[session_id] = []
     state.events[session_id] = []
     state.queries[session_id] = []
+    state.prompts[session_id] = []
     state.clips[session_id] = []
     state.traces[session_id] = []
     state.commentary[session_id] = []
