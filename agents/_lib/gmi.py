@@ -1,33 +1,28 @@
-"""GMI Cloud wrapper (OpenAI-compatible).
-
-NOTE: the GMI key is not yet available so this uses a fallback to Gemini for now.
-"""
-
-import json
+"""GMI Cloud client — OpenAI-compatible inference on DeepSeek V4 Flash."""
 import os
-
+import json
+import logging
 from openai import OpenAI
 
+logger = logging.getLogger(__name__)
 
-def get_client() -> OpenAI | None:
-    key = os.environ.get("GMI_API_KEY", "")
-    if not key or key == "GMICUP10":
-        # Fallback: use Gemini for reasoning tasks until GMI key arrives
-        return None
-    return OpenAI(api_key=key, base_url="https://api.gmi-serving.com/v1")
+_client: OpenAI | None = None
 
+def get_client() -> OpenAI:
+    global _client
+    if _client is None:
+        key = os.environ.get("GMI_API_KEY", "")
+        if not key:
+            raise RuntimeError("GMI_API_KEY not set")
+        _client = OpenAI(api_key=key, base_url="https://api.gmi-serving.com/v1")
+    return _client
 
-def reason_gmi(
-    system_prompt: str,
-    user_prompt: str,
-    model: str = "deepseek-ai/DeepSeek-V4-Pro",
-) -> dict:
+def reason(system_prompt: str, user_prompt: str, model: str = "deepseek-ai/DeepSeek-V4-Flash") -> dict:
+    """Structured JSON reasoning via GMI Cloud."""
     client = get_client()
-    if client is None:
-        from . import gemini
-
-        return gemini.reason(system_prompt, user_prompt)
-
+    # DeepSeek requires "json" in messages for json_object response format
+    if "json" not in user_prompt.lower() and "json" not in system_prompt.lower():
+        user_prompt += "\n\nRespond in JSON format."
     response = client.chat.completions.create(
         model=model,
         messages=[
@@ -35,39 +30,22 @@ def reason_gmi(
             {"role": "user", "content": user_prompt},
         ],
         response_format={"type": "json_object"},
-        max_tokens=2048,
+        max_tokens=4096,
         temperature=0.4,
     )
-    return json.loads(response.choices[0].message.content)
+    content = response.choices[0].message.content
+    return json.loads(content)
 
-
-def vision_gmi(
-    image_b64: str,
-    prompt: str,
-    model: str = "Qwen/Qwen3-VL-235B-A22B-Instruct-FP8",
-) -> dict:
+def chat(system_prompt: str, user_prompt: str, model: str = "deepseek-ai/DeepSeek-V4-Flash") -> str:
+    """Plain text chat via GMI Cloud."""
     client = get_client()
-    if client is None:
-        return {}  # GMI not available yet; caller should fall back
-
     response = client.chat.completions.create(
         model=model,
         messages=[
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/jpeg;base64,{image_b64}"
-                        },
-                    },
-                    {"type": "text", "text": prompt},
-                ],
-            }
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
         ],
-        response_format={"type": "json_object"},
-        max_tokens=512,
-        temperature=0.1,
+        max_tokens=2048,
+        temperature=0.7,
     )
-    return json.loads(response.choices[0].message.content)
+    return response.choices[0].message.content

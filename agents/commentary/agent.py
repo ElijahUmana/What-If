@@ -1,4 +1,4 @@
-"""CommentaryAgent -- live AI co-commentator via gemini-3.5-flash text calls."""
+"""CommentaryAgent -- live AI co-commentator via GMI Cloud (DeepSeek V4 Flash)."""
 
 from __future__ import annotations
 
@@ -6,18 +6,13 @@ import json
 import logging
 from pathlib import Path
 
-from google import genai
-from google.genai import types
-
-from agents._lib.gemini import get_client
+from agents._lib.gmi import chat as gmi_chat
 from agents._lib.trace import trace_span
 
 logger = logging.getLogger(__name__)
 
 _PROMPTS_DIR = Path(__file__).parents[2] / "prompts"
 PERSONA_PROMPT = (_PROMPTS_DIR / "commentary.persona.md").read_text()
-
-_MODEL = "gemini-3.5-flash"
 
 
 def _build_feed(
@@ -55,18 +50,9 @@ async def generate_commentary(
     ) as span:
         feed = _build_feed(events, summaries, match_state)
 
-        client = get_client()
-        response = client.models.generate_content(
-            model=_MODEL,
-            contents=[types.Content(parts=[types.Part(text=feed)])],
-            config=types.GenerateContentConfig(
-                system_instruction=PERSONA_PROMPT,
-                temperature=0.7,
-                max_output_tokens=200,
-            ),
-        )
-        text = response.text.strip()
-        span["payload"]["model"] = _MODEL
+        text = gmi_chat(PERSONA_PROMPT, feed)
+        text = text.strip()
+        span["payload"]["model"] = "deepseek-ai/DeepSeek-V4-Flash"
         span["payload"]["commentary_length"] = len(text)
         span["payload"]["event_count"] = len(events)
         return text

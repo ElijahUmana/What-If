@@ -6,18 +6,13 @@ import json
 import logging
 from pathlib import Path
 
-from google import genai
-from google.genai import types
-
-from agents._lib.gemini import get_client
+from agents._lib.gmi import reason as gmi_reason
 from agents._lib.trace import trace_span
 
 logger = logging.getLogger(__name__)
 
 _PROMPTS_DIR = Path(__file__).parents[2] / "prompts"
 SYSTEM_PROMPT = (_PROMPTS_DIR / "retrieval.rerank.md").read_text()
-
-_MODEL = "gemini-3.5-flash"
 
 
 def _build_candidates_block(
@@ -76,18 +71,8 @@ async def resolve_query(
             f"CANDIDATES:\n{json.dumps(candidates, indent=2)}"
         )
 
-        client = get_client()
-        response = client.models.generate_content(
-            model=_MODEL,
-            contents=[types.Content(parts=[types.Part(text=user_block)])],
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                system_instruction=SYSTEM_PROMPT,
-                temperature=0.3,
-            ),
-        )
-        result = json.loads(response.text)
-        span["payload"]["model"] = _MODEL
+        result = gmi_reason(SYSTEM_PROMPT, user_block)
+        span["payload"]["model"] = "deepseek-ai/DeepSeek-V4-Flash"
         span["payload"]["intent_clarity"] = result.get("intent_clarity")
         span["payload"]["change_type"] = result.get("change_type")
         span["payload"]["candidate_count"] = len(candidates)
