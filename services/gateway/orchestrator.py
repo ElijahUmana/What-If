@@ -199,139 +199,87 @@ async def _perception_loop(session_id: str, agent: IngestAgent) -> None:
                     _debug_errors.append(err)
             last_caption_pts = current_pts
 
-        # --- Summarise every 30 seconds of wall-clock time ---
-        if time.time() - last_summary_time < 45:
-            continue
-        last_summary_time = time.time()
+        # --- Summarise every 45 seconds (fire-and-forget, doesn't block captions) ---
+        if time.time() - last_summary_time >= 45:
+            last_summary_time = time.time()
+            asyncio.create_task(_run_summary(session_id, agent, current_pts))
 
-        try:
-            window_frames = ring.last_n_seconds(30)
-            if len(window_frames) < 5:
-                continue
 
-            match_meta = state.sessions[session_id].get("match_meta", {})
+async def _run_summary(session_id: str, agent: IngestAgent, current_pts: int) -> None:
+    """Run one summary cycle as a background task (doesn't block captions)."""
+    try:
+        ring = agent.frame_ring
+        window_frames = ring.last_n_seconds(30)
+        if len(window_frames) < 5:
+            return
 
-            # Build a mini video from recent .ts chunks
-            chunks_dir = agent.session_dir / "chunks"
-            if not chunks_dir.is_dir():
-                continue
+        match_meta = state.sessions[session_id].get("match_meta", {})
+        chunks_dir = agent.session_dir / "chunks"
+        if not chunks_dir.is_dir():
+            return
 
-            chunk_files = sorted(chunks_dir.glob("*.ts"))
-            # ~15 chunks at 2s each = 30s
-            recent_chunks = chunk_files[-15:]
-            if not recent_chunks:
-                continue
+        chunk_files = sorted(chunks_dir.glob("*.ts"))
+        recent_chunks = chunk_files[-15:]
+        if not recent_chunks:
+            return
 
-            concat_path = f"/tmp/whatif_window_{session_id}.mp4"
-            concat_input = "|".join(str(c) for c in recent_chunks)
-            proc = await asyncio.to_thread(
-                lambda: subprocess.run(
-                    [
-                        "ffmpeg",
-                        "-y",
-                        "-i",
-                        f"concat:{concat_input}",
-                        "-t",
-                        "30",
-                        "-c:v",
-                        "libx264",
-                        "-preset",
-                        "ultrafast",
-                        "-c:a",
-                        "aac",
-                        concat_path,
-                    ],
-                    capture_output=True,
-                    timeout=15,
-                )
+        concat_path = f"/tmp/whatif_window_{session_id}.mp4"
+        concat_input = "|".join(str(c) for c in recent_chunks)
+        proc = await asyncio.to_thread(
+            lambda: subprocess.run(
+                ["ffmpeg", "-y", "-i", f"concat:{concat_input}",
+                 "-t", "30", "-c:v", "libx264", "-preset", "ultrafast",
+                 "-c:a", "aac", concat_path],
+                capture_output=True, timeout=30,
             )
-            if proc.returncode != 0 or not os.path.exists(concat_path):
-                logger.warning(
-                    "ffmpeg concat failed for %s: %s",
-                    session_id,
-                    proc.stderr.decode(errors="replace")[:200],
-                )
-                continue
+        )
+        if proc.returncode != 0 or not os.path.exists(concat_path):
+            _debug_errors.append(f"ffmpeg concat failed: {proc.stderr.decode(errors='replace')[:300]}")
+            return
 
-            with open(concat_path, "rb") as f:
-                video_bytes = f.read()
+        with open(concat_path, "rb") as f:
+            video_bytes = f.read()
 
-            summary = await summarise_window(
-                video_bytes, match_meta, session_id=session_id
-            )
-            summary_entry = {
-                "narrative": summary.get("narrative", ""),
-                "structured": summary.get("structured", {}),
-                "events": summary.get("events", []),
+        summary = await summarise_window(video_bytes, match_meta, session_id=session_id)
+        summary_entry = {
+            "narrative": summary.get("narrative", ""),
+            "structured": summary.get("structured", {}),
+            "events": summary.get("events", []),
+            "timestamp": time.time(),
+        }
+        state.summaries.setdefault(session_id, []).append(summary_entry)
+        await state.broadcast(session_id, "summary.created", summary_entry)
+
+        for ev in summary.get("events", []):
+            event_entry = {
+                "type": ev.get("type", "unknown"),
+                "description": ev.get("description", ""),
+                "confidence": ev.get("confidence", 0),
+                "pts_ms": current_pts,
                 "timestamp": time.time(),
             }
-            state.summaries.setdefault(session_id, []).append(summary_entry)
-            await state.broadcast(
-                session_id, "summary.created", summary_entry
-            )
+            state.events.setdefault(session_id, []).append(event_entry)
+            await state.broadcast(session_id, "event.created", event_entry)
 
-            # Extract and broadcast events
-            for ev in summary.get("events", []):
-                event_entry = {
-                    "type": ev.get("type", "unknown"),
-                    "description": ev.get("description", ""),
-                    "confidence": ev.get("confidence", 0),
-                    "pts_ms": current_pts,
-                    "timestamp": time.time(),
-                }
-                state.events.setdefault(session_id, []).append(event_entry)
-                await state.broadcast(
-                    session_id, "event.created", event_entry
-                )
-
-                # Update match_state on goal events
-                if ev.get("type") == "goal" and ev.get("confidence", 0) > 0.7:
-                    ms = state.match_states.get(session_id, {})
-                    team = ev.get("team", "").lower()
-                    if "home" in team:
-                        ms.setdefault("score", {"home": 0, "away": 0})[
-                            "home"
-                        ] += 1
-                    elif "away" in team:
-                        ms.setdefault("score", {"home": 0, "away": 0})[
-                            "away"
-                        ] += 1
-                    state.match_states[session_id] = ms
-                    await state.broadcast(
-                        session_id, "match_state.update", ms
-                    )
-
-            # Commentary
-            try:
-                events_list = state.events.get(session_id, [])
-                summaries_list = state.summaries.get(session_id, [])
-                ms = state.match_states.get(session_id, {})
-                line = await generate_commentary(
-                    events_list[-5:],
-                    summaries_list[-3:],
-                    ms,
-                    session_id=session_id,
-                )
-                commentary_entry = {"text": line, "timestamp": time.time()}
-                state.commentary.setdefault(session_id, []).append(
-                    commentary_entry
-                )
-                await state.broadcast(
-                    session_id, "commentary.line", commentary_entry
-                )
-            except Exception as e:
-                logger.warning(
-                    "Commentary error for %s: %s", session_id, e
-                )
-
-            # Clean up temp file
-            try:
-                os.remove(concat_path)
-            except OSError:
-                pass
-
+        try:
+            events_list = state.events.get(session_id, [])
+            summaries_list = state.summaries.get(session_id, [])
+            ms = state.match_states.get(session_id, {})
+            line = await generate_commentary(events_list[-5:], summaries_list[-3:], ms, session_id=session_id)
+            commentary_entry = {"text": line, "timestamp": time.time()}
+            state.commentary.setdefault(session_id, []).append(commentary_entry)
+            await state.broadcast(session_id, "commentary.line", commentary_entry)
         except Exception as e:
-            logger.error("Summary loop error for %s: %s", session_id, e)
+            _debug_errors.append(f"Commentary error: {e}")
+
+        try:
+            os.remove(concat_path)
+        except OSError:
+            pass
+
+    except Exception as e:
+        import traceback
+        _debug_errors.append(f"Summary error: {type(e).__name__}: {e}\n{traceback.format_exc()}")
 
 
 # ---------------------------------------------------------------------------

@@ -26,8 +26,8 @@ def resolve_manifest(youtube_url: str, timeout: int = 90) -> str:
     """
     format_attempts = [
         ("720p-live", "300"),
-        ("720p-best", "bv*[height<=720]+ba/b[height<=720]"),
-        ("any-720p", "bv*[height<=720]"),
+        ("720p-h264", "bv[vcodec^=avc1][height<=720]"),
+        ("720p-any", "bv*[height<=720]"),
         ("any-best", "bv*+ba/b"),
     ]
 
