@@ -34,25 +34,25 @@ interface ClipTrayProps {
   clips: Clip[];
 }
 
-const STAGE_ORDER: QueryStatus[] = [
-  "submitted",
+const STAGE_ORDER: string[] = [
+  "received",
   "resolving",
-  "retrieving",
-  "composing",
+  "resolved",
+  "directing",
   "generating",
   "validating",
-  "compositing",
-  "complete",
+  "regenerating",
+  "ready",
 ];
 
-function stageIndex(status: QueryStatus): number {
+function stageIndex(status: string): number {
   const idx = STAGE_ORDER.indexOf(status);
   return idx === -1 ? 0 : idx;
 }
 
 function progressPct(query: Query): number {
   if (query.progress_pct != null) return query.progress_pct;
-  if (query.status === "complete") return 100;
+  if (query.status === "ready" || query.status === "complete") return 100;
   if (query.status === "failed") return 0;
   return Math.round((stageIndex(query.status) / (STAGE_ORDER.length - 1)) * 100);
 }
@@ -60,22 +60,23 @@ function progressPct(query: Query): number {
 function stageLabel(query: Query): string {
   if (query.stage_label) return query.stage_label;
   switch (query.status) {
-    case "submitted":
-      return "Queued";
+    case "received":
+      return "Queued...";
     case "resolving":
       return "Finding the moment...";
-    case "retrieving":
-      return "Pulling frames...";
-    case "composing":
+    case "resolved":
+      return "Moment found, composing...";
+    case "directing":
       return "Writing Veo prompt...";
     case "generating":
-      return "Generating video...";
+      return "Generating video (~60s)...";
     case "validating":
-      return "Checking continuity...";
-    case "compositing":
-      return "Compositing clip...";
+      return "Checking result...";
+    case "regenerating":
+      return "Regenerating...";
+    case "ready":
     case "complete":
-      return "Ready";
+      return "Ready!";
     case "failed":
       return "Failed";
     default:

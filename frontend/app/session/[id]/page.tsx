@@ -80,8 +80,9 @@ export default function SessionPage({ params }: SessionPageProps) {
       onCommentary: (line) => addCommentary(line),
       onEvent: (event) => addEvent(event),
       onQueryProgress: (data) => {
-        if (data.id) {
-          updateQuery(data.id, data);
+        const qid = data.query_id || data.id;
+        if (qid) {
+          updateQuery(qid, { status: data.stage || data.status, ...data });
         }
       },
       onClipReady: (clip) => {
