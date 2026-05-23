@@ -68,17 +68,18 @@ export default function TimelineScrubber({ events }: TimelineScrubberProps) {
         <div className="absolute top-1/2 left-3 right-3 h-px bg-gray-700" />
 
         {/* Event dots */}
-        {events.map((event) => {
+        {events.map((event, index) => {
           const pct = (event.pts_ms / maxPts) * 100;
           const color = EVENT_COLORS[event.type] ?? EVENT_COLORS.other;
-          const isHovered = hoveredId === event.id;
+          const stableKey = event.id ?? `${event.type}_${event.pts_ms}_${index}`;
+          const isHovered = hoveredId === stableKey;
 
           return (
             <div
-              key={event.id}
+              key={stableKey}
               className="absolute top-1/2 -translate-y-1/2 z-10"
               style={{ left: `calc(12px + ${pct}% * (100% - 24px) / 100%)` }}
-              onMouseEnter={() => setHoveredId(event.id)}
+              onMouseEnter={() => setHoveredId(stableKey)}
               onMouseLeave={() => setHoveredId(null)}
             >
               {/* Dot */}

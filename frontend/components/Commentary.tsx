@@ -43,13 +43,15 @@ export default function Commentary({ lines }: CommentaryProps) {
   }
 
   return (
-    <div className="flex flex-1 flex-col gap-1 overflow-y-auto pr-1">
+    <div className="flex flex-1 flex-col gap-1 overflow-y-auto overflow-x-hidden pr-1">
       {lines.map((line, i) => (
         <div
           key={line.id ?? i}
           className={`border-l-2 pl-3 py-1.5 ${lineAccent(line.type)} animate-slide-up`}
         >
-          <p className="text-sm leading-relaxed text-gray-200">{line.text}</p>
+          <p className="text-sm leading-relaxed text-gray-200 break-words overflow-wrap-anywhere"
+             style={{ overflowWrap: "break-word", wordWrap: "break-word" }}
+          >{line.text}</p>
           <span className="mt-0.5 block text-[10px] tabular-nums text-gray-500">
             {formatTime(line.timestamp)}
             {line.pts_ms != null && (

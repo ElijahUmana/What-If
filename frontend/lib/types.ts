@@ -89,11 +89,13 @@ export interface Query {
 export interface Clip {
   id: string;
   query_id: string;
-  prompt_text: string;
-  video_url: string;
+  prompt_text?: string;
+  prompt?: string;
+  video_url?: string;
+  storage_uri?: string;
   thumbnail_url?: string;
   duration_ms: number;
-  created_at: string;
+  created_at?: string;
 }
 
 /* ── WebSocket messages ── */

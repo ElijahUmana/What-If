@@ -1,7 +1,33 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import type { Query, Clip, QueryStatus } from "@/lib/types";
+
+const API_BASE =
+  process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+
+const STORAGE_PREFIX = "/tmp/whatif_storage/sessions/";
+
+/** Derive a playable video URL from a Clip object. */
+function clipVideoUrl(clip: Clip): string {
+  // If the backend already gave us a full video_url, use it.
+  if (clip.video_url) return clip.video_url;
+
+  // Otherwise, derive from storage_uri via the gateway serve_clip endpoint.
+  if (clip.storage_uri) {
+    const relative = clip.storage_uri.startsWith(STORAGE_PREFIX)
+      ? clip.storage_uri.slice(STORAGE_PREFIX.length)
+      : clip.storage_uri;
+    return `${API_BASE}/api/clips/${relative}`;
+  }
+
+  return "";
+}
+
+/** Get the prompt/description text for display. */
+function clipPrompt(clip: Clip): string {
+  return clip.prompt_text ?? clip.prompt ?? "";
+}
 
 interface ClipTrayProps {
   queries: Query[];
@@ -178,13 +204,13 @@ export default function ClipTray({ queries, clips }: ClipTrayProps) {
               &times;
             </button>
             <video
-              src={playingClip.video_url}
+              src={clipVideoUrl(playingClip)}
               controls
               autoPlay
               className="w-full rounded-lg"
             />
             <p className="mt-2 px-2 pb-1 text-sm text-gray-300">
-              {playingClip.prompt_text}
+              {clipPrompt(playingClip)}
             </p>
           </div>
         </div>

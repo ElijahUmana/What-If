@@ -160,7 +160,7 @@ export default function SessionPage({ params }: SessionPageProps) {
         </div>
 
         {/* ── Right: Match info + Commentary + Composer + Clips ── */}
-        <div className="flex w-[35%] flex-col gap-3 border-l border-gray-800 p-4">
+        <div className="flex w-[35%] flex-col gap-3 border-l border-gray-800 p-4 overflow-hidden">
           {/* Match header */}
           <MatchHeader matchState={matchState} wsConnected={wsConnected} />
 
