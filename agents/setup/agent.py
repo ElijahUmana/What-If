@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 _PROMPTS_DIR = Path(__file__).parents[2] / "prompts"
 SYSTEM_PROMPT = (_PROMPTS_DIR / "setup.match_meta.md").read_text()
 
-_MODEL = "gemini-3.5-flash"
+_MODEL = "gemini-2.5-flash"
 
 
 async def identify_match(

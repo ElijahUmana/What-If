@@ -18,7 +18,7 @@ _PROMPTS_DIR = Path(__file__).parents[2] / "prompts"
 FIDELITY_PROMPT = (_PROMPTS_DIR / "validator.fidelity.md").read_text()
 CONTINUITY_PROMPT = (_PROMPTS_DIR / "validator.continuity.md").read_text()
 
-_MODEL = "gemini-3.5-flash"
+_MODEL = "gemini-2.5-flash"
 
 
 async def validate_clip(
