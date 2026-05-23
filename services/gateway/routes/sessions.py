@@ -1,7 +1,11 @@
+import asyncio
+
 from fastapi import APIRouter
 from pydantic import BaseModel
-from .. import state
 import ulid
+
+from .. import state
+from .. import orchestrator
 
 router = APIRouter()
 
@@ -32,7 +36,7 @@ async def create_session(req: CreateSessionRequest):
     state.clips[session_id] = []
     state.traces[session_id] = []
     state.commentary[session_id] = []
-    # TODO: start ingest agent in background
+    asyncio.create_task(orchestrator.start_session(session_id, req.source_url))
     return SessionResponse(session_id=session_id, source_url=req.source_url, ingest_status="starting")
 
 @router.get("/sessions/{session_id}")

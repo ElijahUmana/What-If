@@ -1,7 +1,11 @@
+import asyncio
+
 from fastapi import APIRouter
 from pydantic import BaseModel
-from .. import state
 import ulid
+
+from .. import state
+from .. import orchestrator
 
 router = APIRouter()
 
@@ -21,7 +25,7 @@ async def submit_query(session_id: str, req: SubmitQueryRequest):
     }
     state.queries.setdefault(session_id, []).append(query)
     await state.broadcast(session_id, "query.progress", {"query_id": query_id, "stage": "received"})
-    # TODO: trigger whatif pipeline
+    asyncio.create_task(orchestrator.handle_whatif(session_id, query_id, req.text, req.anchor_pts_ms))
     return query
 
 @router.get("/sessions/{session_id}/queries")
