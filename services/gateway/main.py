@@ -5,6 +5,11 @@ from .routes import sessions, queries, artifacts, traces
 from .ws import router as ws_router
 
 app = FastAPI(title="What If Gateway")
+
+@app.on_event("startup")
+async def startup():
+    from .rocketride_bridge import init_rocketride
+    await init_rocketride()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 app.include_router(sessions.router, prefix="/api")
 app.include_router(queries.router, prefix="/api")

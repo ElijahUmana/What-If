@@ -1,0 +1,94 @@
+{
+  "components": [
+    {
+      "id": "video_source",
+      "provider": "dropper",
+      "config": {
+        "type": "dropper",
+        "accept": "video/*,image/*"
+      },
+      "ui": {"position": {"x": 0, "y": 200}}
+    },
+    {
+      "id": "frame_extractor",
+      "provider": "frame_grabber",
+      "config": {
+        "mode": "interval",
+        "interval": 2,
+        "max_frames": 100,
+        "type": "frame_grabber"
+      },
+      "input": [
+        {"lane": "input", "from": "video_source"}
+      ],
+      "ui": {"position": {"x": 200, "y": 200}}
+    },
+    {
+      "id": "caption_llm",
+      "provider": "llm_vision_gemini",
+      "config": {
+        "model": "gemini-2.5-flash",
+        "apikey": "${ROCKETRIDE_GEMINI_KEY}",
+        "prompt": "You are a football frame captioner. Describe what is happening in this frame in one sentence. Return JSON: {caption, ball_visible, players_visible_count, scene_type, confidence}",
+        "type": "llm_vision"
+      },
+      "input": [
+        {"lane": "image", "from": "frame_extractor"}
+      ],
+      "ui": {"position": {"x": 400, "y": 200}}
+    },
+    {
+      "id": "summariser_agent",
+      "provider": "agent_rocketride",
+      "config": {
+        "instructions": [
+          "You are a football match summariser. You receive frame captions from a football match.",
+          "Accumulate the captions and every 10 frames, produce a structured summary of what happened.",
+          "Include detected events: goals, shots, fouls, cards, corners, substitutions.",
+          "Return JSON: {narrative, events: [{type, description, confidence}]}"
+        ],
+        "max_waves": 3
+      },
+      "input": [
+        {"lane": "questions", "from": "caption_llm"}
+      ],
+      "ui": {"position": {"x": 600, "y": 200}}
+    },
+    {
+      "id": "llm_gmi_summariser",
+      "provider": "llm_openai_api",
+      "config": {
+        "base_url": "https://api.gmi-serving.com/v1",
+        "model": "deepseek-ai/DeepSeek-V4-Flash",
+        "apikey": "${ROCKETRIDE_GMI_KEY}",
+        "modelTotalTokens": 131072,
+        "type": "llm"
+      },
+      "control": [
+        {"classType": "llm", "from": "summariser_agent"}
+      ],
+      "ui": {"position": {"x": 600, "y": 0}}
+    },
+    {
+      "id": "summariser_memory",
+      "provider": "memory_internal",
+      "config": {"type": "memory"},
+      "control": [
+        {"classType": "memory", "from": "summariser_agent"}
+      ],
+      "ui": {"position": {"x": 600, "y": 400}}
+    },
+    {
+      "id": "response_timeline",
+      "provider": "response_answers",
+      "config": {"laneName": "answers"},
+      "input": [
+        {"lane": "answers", "from": "summariser_agent"}
+      ],
+      "ui": {"position": {"x": 800, "y": 200}}
+    }
+  ],
+  "project_id": "whatif-perception",
+  "version": "1.0.0",
+  "viewport": {"x": 0, "y": 0, "zoom": 1}
+}
