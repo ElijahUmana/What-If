@@ -39,17 +39,18 @@ def build_veo_prompt(brief: dict) -> str:
     if not brief or not isinstance(brief, dict):
         return ""
 
-    # If the Director returned a ready-made veo_prompt, use it directly
+    # If the Director returned a ready-made veo_prompt, use it as the base
+    # but still append camera guidance and negative constraints below.
+    has_direct_prompt = False
     if brief.get("veo_prompt") and isinstance(brief["veo_prompt"], str):
         direct_prompt = brief["veo_prompt"].strip()
         if len(direct_prompt) > 50:
-            # Still trim to limit
-            max_chars = 1024 * 4
-            if len(direct_prompt) > max_chars:
-                direct_prompt = direct_prompt[:max_chars].rsplit(" ", 1)[0] + "..."
-            return direct_prompt
+            has_direct_prompt = True
 
     sections: list[str] = []
+
+    if has_direct_prompt:
+        sections.append(direct_prompt)
 
     # SCENE
     scene = _safe_dict(brief.get("scene"))

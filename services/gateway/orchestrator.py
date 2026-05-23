@@ -20,7 +20,7 @@ from agents.retrieval.agent import resolve_query
 from agents.director.agent import compose_veo_brief
 from agents.director.prompt_builder import build_veo_prompt
 from agents.videogen.agent import generate_clip
-from agents.validator.agent import validate_clip
+from agents.validator.agent import validate_clip, validate_continuity
 from agents.commentary.agent import generate_commentary
 from agents.setup.agent import identify_match
 from agents._lib.storage import store
@@ -379,6 +379,19 @@ async def handle_whatif(
 
                 ref_frames_bytes = [f["jpeg_bytes"] for f in selected][:3]
 
+        # If no reference frames from the anchor window, try ANY recent
+        # frames from the ring buffer. Generating without visual context
+        # violates the continuity premise, so fail if still empty.
+        if not ref_frames_bytes and agent:
+            recent = agent.frame_ring.last_n_seconds(10)
+            if recent:
+                ref_frames_bytes = [f["jpeg_bytes"] for f in recent[:3]]
+        if not ref_frames_bytes:
+            raise RuntimeError(
+                "Cannot generate counterfactual: no reference frames available. "
+                "The live feed may not have buffered enough frames yet."
+            )
+
         # Find the anchor event
         anchor_event: dict = {}
         anchor_pts = resolved.get("anchor_pts_ms", 0)
@@ -440,6 +453,29 @@ async def handle_whatif(
             session_id=session_id,
         )
 
+        # TODO: Continuity validation requires extracting sample frames from
+        # the generated MP4 (needs ffmpeg). For now, attempt it gracefully
+        # and merge the verdict if it succeeds.
+        try:
+            continuity_verdict = await validate_continuity(
+                reference_frames=ref_frames_bytes,
+                clip_sample_frames=ref_frames_bytes,  # placeholder until ffmpeg frame extraction
+                continuity_brief=brief.get("continuity", {}),
+                session_id=session_id,
+            )
+            if continuity_verdict.get("verdict") == "reject":
+                verdict["verdict"] = "reject"
+                verdict.setdefault("verdict_reasons", []).extend(
+                    continuity_verdict.get("verdict_reasons", [])
+                )
+            elif continuity_verdict.get("verdict") == "regenerate" and verdict.get("verdict") == "ok":
+                verdict["verdict"] = "regenerate"
+                verdict.setdefault("verdict_reasons", []).extend(
+                    continuity_verdict.get("verdict_reasons", [])
+                )
+        except Exception as e:
+            logger.warning("Continuity validation skipped: %s", e)
+
         # One retry on "regenerate" verdict -- re-run Director with feedback
         if verdict.get("verdict") == "regenerate":
             await state.broadcast(
@@ -479,30 +515,50 @@ async def handle_whatif(
             )
 
         # ---- Stage 5: Store and broadcast ----
-        clip_path = store(session_id, "clips", f"{query_id}.mp4", clip_bytes)
+        final_verdict = verdict.get("verdict", "ok")
 
-        clip_entry = {
-            "id": f"cl_{query_id}",
-            "query_id": query_id,
-            "storage_uri": clip_path,
-            "duration_ms": int(gen_meta.get("latency_s", 8) * 1000),
-            "prompt": text,
-            "verdict": verdict.get("verdict", "ok"),
-            "status": "ready",
-        }
-        state.clips.setdefault(session_id, []).append(clip_entry)
+        if final_verdict == "reject":
+            # Clip failed validation -- do NOT broadcast as ready
+            rejection_reasons = verdict.get("verdict_reasons", ["validation rejected"])
+            for q in state.queries.get(session_id, []):
+                if q["id"] == query_id:
+                    q["status"] = "failed"
+                    q["error"] = f"Clip rejected: {'; '.join(str(r) for r in rejection_reasons)}"
+                    break
+            await state.broadcast(
+                session_id,
+                "query.progress",
+                {
+                    "query_id": query_id,
+                    "stage": "failed",
+                    "error": f"Clip rejected: {'; '.join(str(r) for r in rejection_reasons)}",
+                },
+            )
+        else:
+            clip_path = store(session_id, "clips", f"{query_id}.mp4", clip_bytes)
 
-        for q in state.queries.get(session_id, []):
-            if q["id"] == query_id:
-                q["status"] = "ready"
-                break
+            clip_entry = {
+                "id": f"cl_{query_id}",
+                "query_id": query_id,
+                "storage_uri": clip_path,
+                "duration_ms": int(gen_meta.get("latency_s", 8) * 1000),
+                "prompt": text,
+                "verdict": final_verdict,
+                "status": "ready",
+            }
+            state.clips.setdefault(session_id, []).append(clip_entry)
 
-        await state.broadcast(
-            session_id,
-            "query.progress",
-            {"query_id": query_id, "stage": "ready"},
-        )
-        await state.broadcast(session_id, "clip.ready", clip_entry)
+            for q in state.queries.get(session_id, []):
+                if q["id"] == query_id:
+                    q["status"] = "ready"
+                    break
+
+            await state.broadcast(
+                session_id,
+                "query.progress",
+                {"query_id": query_id, "stage": "ready"},
+            )
+            await state.broadcast(session_id, "clip.ready", clip_entry)
 
     except Exception as e:
         logger.error(
