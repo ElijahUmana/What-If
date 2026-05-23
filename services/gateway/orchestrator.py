@@ -337,7 +337,18 @@ async def handle_whatif(
             {"query_id": query_id, "stage": "directing"},
         )
 
-        # Gather reference frames from the ring buffer around the anchor
+        # If the user provided an explicit anchor, override retrieval's answer
+        if anchor_pts_ms is not None and anchor_pts_ms > 0:
+            resolved["anchor_pts_ms"] = anchor_pts_ms
+            # Recalculate window around user-provided anchor
+            resolved["window_start_ms"] = max(0, anchor_pts_ms - 15000)
+            resolved["window_end_ms"] = anchor_pts_ms + 10000
+
+        # Gather reference frames from the ring buffer around the anchor.
+        # Strategy: pick 3 frames spread across the window --
+        #   1. First frame (scene setup / pre-event context)
+        #   2. Frame closest to anchor (the moment itself)
+        #   3. Last frame (aftermath / post-event state)
         ref_frames_bytes: list[bytes] = []
         if agent:
             anchor = resolved.get("anchor_pts_ms", 0)
@@ -347,11 +358,26 @@ async def handle_whatif(
             window_end = resolved.get("window_end_ms", anchor + 10000)
             window = agent.frame_ring.window(window_start, window_end)
             if window:
-                step = max(1, len(window) // 4)
-                ref_frames_bytes = [
-                    window[i]["jpeg_bytes"]
-                    for i in range(0, len(window), step)
-                ][:4]
+                # First frame: scene setup
+                selected = [window[0]]
+
+                # Closest to anchor: the key moment
+                if len(window) > 2:
+                    closest_idx = min(
+                        range(len(window)),
+                        key=lambda i: abs(window[i].get("pts_ms", 0) - anchor),
+                    )
+                    # Avoid duplicating if closest is also first or last
+                    if closest_idx != 0 and closest_idx != len(window) - 1:
+                        selected.append(window[closest_idx])
+                    elif len(window) > 2:
+                        selected.append(window[len(window) // 2])
+
+                # Last frame: aftermath
+                if len(window) > 1:
+                    selected.append(window[-1])
+
+                ref_frames_bytes = [f["jpeg_bytes"] for f in selected][:3]
 
         # Find the anchor event
         anchor_event: dict = {}
@@ -414,19 +440,35 @@ async def handle_whatif(
             session_id=session_id,
         )
 
-        # One retry on "regenerate" verdict
+        # One retry on "regenerate" verdict -- re-run Director with feedback
         if verdict.get("verdict") == "regenerate":
             await state.broadcast(
                 session_id,
                 "query.progress",
                 {"query_id": query_id, "stage": "regenerating"},
             )
-            feedback_text = "; ".join(
-                verdict.get("verdict_reasons", ["improve quality"])
+
+            # Re-compose the brief with validator feedback so the Director
+            # addresses each complaint structurally
+            retry_brief = await compose_veo_brief(
+                query={"text": text, **resolved},
+                anchor_event=anchor_event if anchor_event else {"type": "unknown", "description": text},
+                window_frames=ref_frames_bytes,
+                captions=window_captions if window_captions else [{"text": text}],
+                summary=summaries_list[-1] if summaries_list else {"narrative": text},
+                match_state=ms if ms else {"home_team": "Home", "away_team": "Away"},
+                validator_feedback=verdict,
+                session_id=session_id,
             )
-            retry_prompt = veo_prompt + "\nFEEDBACK: " + feedback_text
+            if retry_brief and isinstance(retry_brief, dict):
+                brief = retry_brief
+
+            veo_prompt = build_veo_prompt(brief)
+            if not veo_prompt:
+                veo_prompt = f"A football match scene. {text} Broadcast camera angle, realistic, stadium atmosphere."
+
             clip_bytes, gen_meta = await generate_clip(
-                retry_prompt, ref_frames_bytes, session_id=session_id
+                veo_prompt, ref_frames_bytes, session_id=session_id
             )
             verdict = await validate_clip(
                 clip_bytes=clip_bytes,
