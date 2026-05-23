@@ -373,13 +373,16 @@ async def handle_whatif(
 
         brief = await compose_veo_brief(
             query={"text": text, **resolved},
-            anchor_event=anchor_event,
+            anchor_event=anchor_event if anchor_event else {"type": "unknown", "description": text},
             window_frames=ref_frames_bytes,
-            captions=window_captions,
-            summary=summaries_list[-1] if summaries_list else {},
-            match_state=ms,
+            captions=window_captions if window_captions else [{"text": text}],
+            summary=summaries_list[-1] if summaries_list else {"narrative": text},
+            match_state=ms if ms else {"home_team": "Home", "away_team": "Away"},
             session_id=session_id,
         )
+
+        if not brief or not isinstance(brief, dict):
+            brief = {"counterfactual_delta": {"beat_description": text}, "continuation_beats": [{"duration_s": 8, "description": text}], "scene": {}, "continuity": {}, "real_event": {"description": ""}, "audio": {"crowd": "cheering"}, "camera": {"persona": "broadcast", "movement": "pan"}, "negative": []}
 
         # ---- Stage 3: Generate ----
         await state.broadcast(
@@ -389,6 +392,9 @@ async def handle_whatif(
         )
 
         veo_prompt = build_veo_prompt(brief)
+        if not veo_prompt:
+            veo_prompt = f"A football match scene. {text} Broadcast camera angle, realistic, stadium atmosphere."
+
         clip_bytes, gen_meta = await generate_clip(
             veo_prompt, ref_frames_bytes, session_id=session_id
         )
