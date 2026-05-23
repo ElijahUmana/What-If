@@ -175,7 +175,7 @@ async def _perception_loop(session_id: str, agent: IngestAgent) -> None:
         # --- Caption new frames (every 3rd to stay under rate limits) ---
         if current_pts > last_caption_pts:
             frame_counter += 1
-            if frame_counter % 10 == 0:
+            if frame_counter % 20 == 0:
                 try:
                     caption = await caption_frame(
                         latest["jpeg_bytes"], session_id
