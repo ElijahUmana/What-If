@@ -15,7 +15,24 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 PIPELINES_DIR = Path(__file__).parents[2] / "pipelines"
-ENGINE_URI = os.environ.get("ROCKETRIDE_ENGINE_URI", "ws://localhost:5565")
+def _detect_engine_port() -> str:
+    """Auto-detect the RocketRide engine port from the running process."""
+    import subprocess
+    try:
+        out = subprocess.run(
+            ["lsof", "-i", "-P", "-n"],
+            capture_output=True, text=True, timeout=5,
+        ).stdout
+        for line in out.splitlines():
+            if "engine" in line and "LISTEN" in line:
+                parts = line.split(":")
+                port = parts[-1].split()[0]
+                return f"ws://localhost:{port}"
+    except Exception:
+        pass
+    return os.environ.get("ROCKETRIDE_ENGINE_URI", "ws://localhost:5565")
+
+ENGINE_URI = _detect_engine_port()
 ENGINE_KEY = os.environ.get("ROCKETRIDE_API_KEY", "")
 
 _client = None

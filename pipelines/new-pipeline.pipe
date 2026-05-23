@@ -1,0 +1,95 @@
+{
+  "components": [
+    {
+      "id": "dropper_1",
+      "provider": "dropper",
+      "name": "Dropper",
+      "config": {
+        "hideForm": true,
+        "mode": "Source",
+        "parameters": {},
+        "type": "dropper",
+        "name": "Dropper"
+      },
+      "ui": {
+        "position": {
+          "x": 1390,
+          "y": 1000
+        },
+        "nodeType": "default",
+        "formDataValid": true
+      }
+    },
+    {
+      "id": "parse_1",
+      "provider": "parse",
+      "name": "Parser",
+      "config": {
+        "name": "Parser"
+      },
+      "ui": {
+        "position": {
+          "x": 1580,
+          "y": 1000
+        },
+        "nodeType": "default",
+        "formDataValid": true
+      },
+      "input": [
+        {
+          "lane": "tags",
+          "from": "dropper_1"
+        }
+      ]
+    },
+    {
+      "id": "image_vision_gemini_1",
+      "provider": "image_vision_gemini",
+      "name": "Gemini Vision",
+      "config": {
+        "profile": "gemini-2_5-flash",
+        "gemini-2_5-flash": {},
+        "name": "Gemini Vision"
+      },
+      "ui": {
+        "position": {
+          "x": 1770,
+          "y": 1000
+        },
+        "nodeType": "default",
+        "formDataValid": true
+      },
+      "input": [
+        {
+          "lane": "image",
+          "from": "parse_1"
+        }
+      ]
+    },
+    {
+      "id": "response_text_1",
+      "provider": "response_text",
+      "name": "Return Text",
+      "config": {
+        "laneName": "text",
+        "name": "Return Text"
+      },
+      "ui": {
+        "position": {
+          "x": 1960,
+          "y": 1000
+        },
+        "nodeType": "default",
+        "formDataValid": true
+      }
+    }
+  ],
+  "project_id": "79d6b1c1-3d08-40fa-b08c-2ac80360db0c",
+  "isLocked": false,
+  "snapToGrid": true,
+  "snapGridSize": [
+    10,
+    10
+  ],
+  "version": 1
+}
