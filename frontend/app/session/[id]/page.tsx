@@ -109,7 +109,7 @@ export default function SessionPage({ params }: SessionPageProps) {
   const embedUrl = sourceUrl ? toEmbedUrl(sourceUrl) : null;
 
   return (
-    <div className="flex min-h-screen flex-col bg-gray-950">
+    <div className="flex h-screen flex-col bg-gray-950 overflow-hidden">
       {/* ── Top nav ── */}
       <header className="flex items-center justify-between border-b border-gray-800 px-6 py-3">
         <a href="/" className="text-lg font-bold text-white hover:text-gray-300 transition-colors">
@@ -129,7 +129,7 @@ export default function SessionPage({ params }: SessionPageProps) {
       {/* ── Main content ── */}
       <div className="flex flex-1 overflow-hidden">
         {/* ── Left: Video + Timeline ── */}
-        <div className="flex w-[65%] flex-col gap-4 p-4">
+        <div className="flex w-[65%] flex-col gap-4 p-4 overflow-y-auto">
           {/* Video embed */}
           <div className="relative aspect-video w-full overflow-hidden rounded-xl bg-gray-900 border border-gray-800">
             {embedUrl ? (
@@ -160,7 +160,7 @@ export default function SessionPage({ params }: SessionPageProps) {
         </div>
 
         {/* ── Right: Match info + Commentary + Composer + Clips ── */}
-        <div className="flex w-[35%] flex-col gap-3 border-l border-gray-800 p-4 overflow-hidden">
+        <div className="flex w-[35%] min-h-0 flex-col gap-3 border-l border-gray-800 p-4 overflow-hidden">
           {/* Match header */}
           <MatchHeader matchState={matchState} wsConnected={wsConnected} />
 
