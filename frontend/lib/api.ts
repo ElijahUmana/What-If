@@ -33,6 +33,10 @@ export function createSession(sourceUrl: string): Promise<Session> {
   });
 }
 
+export function fetchSession(sessionId: string): Promise<Session> {
+  return request<Session>(`/api/sessions/${sessionId}`);
+}
+
 /* ── Queries ── */
 
 export function submitQuery(

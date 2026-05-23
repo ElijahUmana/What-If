@@ -3,7 +3,7 @@
 import { useEffect, useRef, use } from "react";
 import { useSessionStore } from "@/lib/store";
 import { connectSession } from "@/lib/ws";
-import { fetchTimeline, fetchClips } from "@/lib/api";
+import { fetchSession, fetchTimeline, fetchClips } from "@/lib/api";
 import { toEmbedUrl } from "@/lib/youtube";
 import MatchHeader from "@/components/MatchHeader";
 import Commentary from "@/components/Commentary";
@@ -42,16 +42,22 @@ export default function SessionPage({ params }: SessionPageProps) {
   useEffect(() => {
     setSession(sessionId, "");
 
+    // Fetch session to get source_url
+    fetchSession(sessionId)
+      .then((data) => {
+        if (data.source_url) {
+          setSession(sessionId, data.source_url);
+        }
+      })
+      .catch(() => {});
+
     // Fetch initial timeline + clips
     fetchTimeline(sessionId)
       .then((data) => {
         if (data.match_state) updateMatchState(data.match_state);
         if (data.events) setEvents(data.events);
-        // Update sourceUrl from match_state if we have it
       })
-      .catch(() => {
-        // Timeline not ready yet -- WS will deliver data
-      });
+      .catch(() => {});
 
     fetchClips(sessionId)
       .then((data) => {
