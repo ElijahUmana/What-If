@@ -57,9 +57,16 @@ async def init_rocketride() -> bool:
                 cfg = comp.get("config", {})
                 if cfg.get("apikey") == "${ROCKETRIDE_GMI_KEY}":
                     cfg["apikey"] = gmi_key
-            result = await _client.use(pipeline=pipe_config)
-            _director_token = result.get("token")
-            logger.info("RocketRide director pipeline loaded: %s", _director_token)
+            try:
+                result = await _client.use(pipeline=pipe_config)
+                _director_token = result.get("token")
+                logger.info("RocketRide director pipeline loaded: %s", _director_token)
+            except RuntimeError as pipe_err:
+                if "already running" in str(pipe_err).lower():
+                    logger.info("RocketRide pipeline already running, reusing")
+                    _director_token = "reuse"
+                else:
+                    raise
 
         _engine_available = True
         return True
