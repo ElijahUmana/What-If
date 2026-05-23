@@ -1,97 +1,117 @@
 {
+  "source": "chat_1",
+  "project_id": "b950b68e-5a25-45d2-ace9-02111d60bc14",
+  "version": 1,
   "components": [
     {
-      "id": "chat_input",
+      "id": "chat_1",
       "provider": "chat",
       "config": {
-        "mode": "question",
+        "hideForm": true,
+        "mode": "Source",
+        "parameters": {},
         "type": "chat"
       },
-      "ui": {"position": {"x": 0, "y": 200}}
+      "ui": {
+        "position": {
+          "x": 0,
+          "y": 200
+        },
+        "nodeType": "default",
+        "formDataValid": true
+      }
     },
     {
-      "id": "director_agent",
+      "id": "agent_rocketride_1",
       "provider": "agent_rocketride",
       "config": {
         "instructions": [
-          "You are the DirectorAgent for the What-If football counterfactual system.",
-          "The user will give you a 'what if' question about a football match. You must:",
-          "1. Use the search tool to find the relevant moment in the match timeline",
-          "2. Compose a structured Veo video generation brief with scene, continuity, counterfactual, and continuation beats",
-          "3. Return the brief as a JSON object matching the Veo schema",
-          "Always ground your response in the match events and captions provided. Never invent events that weren't observed.",
-          "Return your final answer as JSON with keys: scene, continuity, real_event, counterfactual_delta, continuation_beats, audio, camera, negative"
+          "You are the What-If football match analyst for a real-time counterfactual video generation system called What If.",
+          "You receive what-if questions about moments in live football matches along with match context (events, summaries, match state).",
+          "Your job is to analyze the counterfactual scenario and produce a structured Veo video generation brief.",
+          "Always respond with JSON containing: event_type, moment_description, counterfactual_change, expected_outcome, veo_prompt (a cinematic text prompt for video generation), confidence (0-1)."
         ],
-        "max_waves": 8
+        "max_waves": 5,
+        "parameters": {}
       },
       "input": [
-        {"lane": "questions", "from": "chat_input"}
+        {
+          "lane": "questions",
+          "from": "chat_1"
+        }
       ],
-      "ui": {"position": {"x": 300, "y": 200}}
+      "ui": {
+        "position": {
+          "x": 300,
+          "y": 200
+        },
+        "nodeType": "default",
+        "formDataValid": true
+      }
     },
     {
-      "id": "llm_gmi_director",
-      "provider": "llm_openai_api",
+      "id": "llm_gmi_cloud_1",
+      "provider": "llm_gmi_cloud",
       "config": {
-        "base_url": "https://api.gmi-serving.com/v1",
-        "model": "deepseek-ai/DeepSeek-V4-Flash",
         "apikey": "${ROCKETRIDE_GMI_KEY}",
-        "modelTotalTokens": 131072,
-        "type": "llm"
+        "model": "deepseek-ai/DeepSeek-V4-Flash"
       },
       "control": [
-        {"classType": "llm", "from": "director_agent"}
+        {
+          "classType": "llm",
+          "from": "agent_rocketride_1"
+        }
       ],
-      "ui": {"position": {"x": 300, "y": 0}}
+      "ui": {
+        "position": {
+          "x": 300,
+          "y": 0
+        },
+        "nodeType": "default",
+        "formDataValid": true
+      }
     },
     {
-      "id": "director_memory",
+      "id": "memory_internal_1",
       "provider": "memory_internal",
-      "config": {"type": "memory"},
-      "control": [
-        {"classType": "memory", "from": "director_agent"}
-      ],
-      "ui": {"position": {"x": 300, "y": 400}}
-    },
-    {
-      "id": "tool_search_timeline",
-      "provider": "tool_python",
       "config": {
-        "type": "tool",
-        "code": "import json\n\ndef run(query: str) -> str:\n    \"\"\"Search the match timeline for events matching the query.\"\"\"\n    # In production, this calls pgvector. For now, returns the timeline from memory.\n    return json.dumps({'result': 'Timeline search for: ' + query})\n",
-        "description": "Search the match timeline for events, goals, shots, fouls, and other moments. Pass a natural language query.",
-        "timeout": 30
+        "type": "memory"
       },
       "control": [
-        {"classType": "tool", "from": "director_agent"}
+        {
+          "classType": "memory",
+          "from": "agent_rocketride_1"
+        }
       ],
-      "ui": {"position": {"x": 500, "y": 100}}
+      "ui": {
+        "position": {
+          "x": 300,
+          "y": 400
+        },
+        "nodeType": "default",
+        "formDataValid": true
+      }
     },
     {
-      "id": "tool_compose_brief",
-      "provider": "tool_python",
-      "config": {
-        "type": "tool",
-        "code": "import json\n\ndef run(brief_json: str) -> str:\n    \"\"\"Validate and store the Veo generation brief.\"\"\"\n    brief = json.loads(brief_json)\n    required = ['scene', 'counterfactual_delta', 'continuation_beats']\n    missing = [k for k in required if k not in brief]\n    if missing:\n        return json.dumps({'error': f'Missing keys: {missing}'})\n    return json.dumps({'status': 'brief_ready', 'brief': brief})\n",
-        "description": "Validate and finalize the Veo video generation brief. Pass the complete brief as a JSON string.",
-        "timeout": 10
-      },
-      "control": [
-        {"classType": "tool", "from": "director_agent"}
-      ],
-      "ui": {"position": {"x": 500, "y": 300}}
-    },
-    {
-      "id": "response_output",
+      "id": "response_answers_1",
       "provider": "response_answers",
-      "config": {"laneName": "answers"},
+      "config": {
+        "laneName": "answers"
+      },
       "input": [
-        {"lane": "answers", "from": "director_agent"}
+        {
+          "lane": "answers",
+          "from": "agent_rocketride_1"
+        }
       ],
-      "ui": {"position": {"x": 600, "y": 200}}
+      "ui": {
+        "position": {
+          "x": 600,
+          "y": 200
+        },
+        "nodeType": "default",
+        "formDataValid": true
+      }
     }
-  ],
-  "project_id": "whatif-director",
-  "version": "1.0.0",
-  "viewport": {"x": 0, "y": 0, "zoom": 1}
+  ]
 }
