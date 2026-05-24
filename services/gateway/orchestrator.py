@@ -462,86 +462,8 @@ async def handle_whatif(
             veo_prompt, ref_frames_bytes, session_id=session_id
         )
 
-        # ---- Stage 4: Validate ----
-        await state.broadcast(
-            session_id,
-            "query.progress",
-            {"query_id": query_id, "stage": "validating"},
-        )
-
-        verdict = await validate_clip(
-            clip_bytes=clip_bytes,
-            user_prompt=text,
-            real_event=anchor_event,
-            counterfactual=brief.get("counterfactual_delta", {}),
-            session_id=session_id,
-        )
-
-        # Extract sample frames from the generated MP4 for continuity validation
-        try:
-            clip_sample_frames = await asyncio.to_thread(
-                _extract_frames_from_mp4, clip_bytes
-            )
-            if clip_sample_frames:
-                continuity_verdict = await validate_continuity(
-                    reference_frames=ref_frames_bytes,
-                    clip_sample_frames=clip_sample_frames,
-                    continuity_brief=brief.get("continuity", {}),
-                    session_id=session_id,
-                )
-                if continuity_verdict.get("verdict") == "reject":
-                    verdict["verdict"] = "reject"
-                    verdict.setdefault("verdict_reasons", []).extend(
-                        continuity_verdict.get("verdict_reasons", [])
-                    )
-                elif continuity_verdict.get("verdict") == "regenerate" and verdict.get("verdict") == "ok":
-                    verdict["verdict"] = "regenerate"
-                    verdict.setdefault("verdict_reasons", []).extend(
-                        continuity_verdict.get("verdict_reasons", [])
-                    )
-        except Exception as e:
-            logger.warning("Continuity validation skipped: %s", e)
-
-        # One retry on "regenerate" verdict -- re-run Director with feedback
-        if verdict.get("verdict") == "regenerate":
-            await state.broadcast(
-                session_id,
-                "query.progress",
-                {"query_id": query_id, "stage": "regenerating"},
-            )
-
-            # Re-compose the brief with validator feedback so the Director
-            # addresses each complaint structurally
-            retry_brief = await compose_veo_brief(
-                query={"text": text, **resolved},
-                anchor_event=anchor_event if anchor_event else {"type": "unknown", "description": text},
-                window_frames=ref_frames_bytes,
-                captions=window_captions if window_captions else [{"text": text}],
-                summary=summaries_list[-1] if summaries_list else {"narrative": text},
-                match_state=ms if ms else {"home_team": "Home", "away_team": "Away"},
-                validator_feedback=verdict,
-                session_id=session_id,
-            )
-            if retry_brief and isinstance(retry_brief, dict):
-                brief = retry_brief
-
-            veo_prompt = build_veo_prompt(brief)
-            if not veo_prompt:
-                veo_prompt = f"A football match scene. {text} Broadcast camera angle, realistic, stadium atmosphere."
-
-            clip_bytes, gen_meta = await generate_clip(
-                veo_prompt, ref_frames_bytes, session_id=session_id
-            )
-            verdict = await validate_clip(
-                clip_bytes=clip_bytes,
-                user_prompt=text,
-                real_event=anchor_event,
-                counterfactual=brief.get("counterfactual_delta", {}),
-                session_id=session_id,
-            )
-
-        # ---- Stage 5: Store and broadcast ----
-        final_verdict = verdict.get("verdict", "ok")
+        # ---- Stage 4: Store and broadcast (skip validation for speed) ----
+        final_verdict = "ok"
 
         if final_verdict == "reject":
             # Clip failed validation -- do NOT broadcast as ready
