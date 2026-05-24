@@ -16,7 +16,7 @@ from agents._lib.trace import trace_span
 
 logger = logging.getLogger(__name__)
 
-_MODEL = "veo-3.1-lite-generate-preview"
+_MODEL = "veo-3.1-fast-generate-preview"
 
 # Veo operation timeout: 5 minutes (generation typically takes 60-90s)
 _VEO_TIMEOUT_S = 300

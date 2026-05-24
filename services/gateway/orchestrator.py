@@ -36,6 +36,32 @@ _debug_errors: list[str] = []
 WORK_DIR = os.environ.get("WORK_DIR", "/tmp/whatif")
 
 
+def _extract_frames_from_mp4(mp4_bytes: bytes, num_frames: int = 3) -> list[bytes]:
+    """Extract sample JPEG frames from an MP4 using ffmpeg."""
+    import tempfile
+    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
+        tmp.write(mp4_bytes)
+        tmp_path = tmp.name
+    try:
+        out_dir = tmp_path + "_frames"
+        os.makedirs(out_dir, exist_ok=True)
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", tmp_path, "-vf", f"fps=1/{max(1, 8 // num_frames)}", "-q:v", "4", f"{out_dir}/f_%02d.jpg"],
+            capture_output=True, timeout=10,
+        )
+        frames = []
+        for f in sorted(os.listdir(out_dir))[:num_frames]:
+            with open(os.path.join(out_dir, f), "rb") as fh:
+                frames.append(fh.read())
+        return frames
+    except Exception:
+        return []
+    finally:
+        os.unlink(tmp_path)
+        import shutil
+        shutil.rmtree(out_dir, ignore_errors=True)
+
+
 # ---------------------------------------------------------------------------
 # Session lifecycle
 # ---------------------------------------------------------------------------
@@ -172,7 +198,7 @@ async def _perception_loop(session_id: str, agent: IngestAgent) -> None:
 
         current_pts = latest["pts_ms"]
 
-        # --- Caption new frames (every 3rd to stay under rate limits) ---
+        # --- Caption new frames (every 20th to stay under rate limits) ---
         if current_pts > last_caption_pts:
             frame_counter += 1
             if frame_counter % 20 == 0:
@@ -351,11 +377,9 @@ async def handle_whatif(
         #   3. Last frame (aftermath / post-event state)
         ref_frames_bytes: list[bytes] = []
         if agent:
-            anchor = resolved.get("anchor_pts_ms", 0)
-            window_start = resolved.get(
-                "window_start_ms", max(0, anchor - 15000)
-            )
-            window_end = resolved.get("window_end_ms", anchor + 10000)
+            anchor = resolved.get("anchor_pts_ms") or 0
+            window_start = resolved.get("window_start_ms") or max(0, anchor - 15000)
+            window_end = resolved.get("window_end_ms") or (anchor + 10000)
             window = agent.frame_ring.window(window_start, window_end)
             if window:
                 # First frame: scene setup
@@ -394,7 +418,7 @@ async def handle_whatif(
 
         # Find the anchor event
         anchor_event: dict = {}
-        anchor_pts = resolved.get("anchor_pts_ms", 0)
+        anchor_pts = resolved.get("anchor_pts_ms") or 0
         for ev in events_list:
             if abs(ev.get("pts_ms", 0) - anchor_pts) < 5000:
                 anchor_event = ev
@@ -453,26 +477,28 @@ async def handle_whatif(
             session_id=session_id,
         )
 
-        # TODO: Continuity validation requires extracting sample frames from
-        # the generated MP4 (needs ffmpeg). For now, attempt it gracefully
-        # and merge the verdict if it succeeds.
+        # Extract sample frames from the generated MP4 for continuity validation
         try:
-            continuity_verdict = await validate_continuity(
-                reference_frames=ref_frames_bytes,
-                clip_sample_frames=ref_frames_bytes,  # placeholder until ffmpeg frame extraction
-                continuity_brief=brief.get("continuity", {}),
-                session_id=session_id,
+            clip_sample_frames = await asyncio.to_thread(
+                _extract_frames_from_mp4, clip_bytes
             )
-            if continuity_verdict.get("verdict") == "reject":
-                verdict["verdict"] = "reject"
-                verdict.setdefault("verdict_reasons", []).extend(
-                    continuity_verdict.get("verdict_reasons", [])
+            if clip_sample_frames:
+                continuity_verdict = await validate_continuity(
+                    reference_frames=ref_frames_bytes,
+                    clip_sample_frames=clip_sample_frames,
+                    continuity_brief=brief.get("continuity", {}),
+                    session_id=session_id,
                 )
-            elif continuity_verdict.get("verdict") == "regenerate" and verdict.get("verdict") == "ok":
-                verdict["verdict"] = "regenerate"
-                verdict.setdefault("verdict_reasons", []).extend(
-                    continuity_verdict.get("verdict_reasons", [])
-                )
+                if continuity_verdict.get("verdict") == "reject":
+                    verdict["verdict"] = "reject"
+                    verdict.setdefault("verdict_reasons", []).extend(
+                        continuity_verdict.get("verdict_reasons", [])
+                    )
+                elif continuity_verdict.get("verdict") == "regenerate" and verdict.get("verdict") == "ok":
+                    verdict["verdict"] = "regenerate"
+                    verdict.setdefault("verdict_reasons", []).extend(
+                        continuity_verdict.get("verdict_reasons", [])
+                    )
         except Exception as e:
             logger.warning("Continuity validation skipped: %s", e)
 
