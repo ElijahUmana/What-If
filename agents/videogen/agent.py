@@ -85,11 +85,13 @@ async def generate_clip(
         submit_attempt = 0
         for submit_attempt in range(_VEO_MAX_RETRIES + 1):
             try:
+                # Lite model doesn't support referenceImages
+                use_refs = refs if refs and "lite" not in _MODEL else None
                 operation = client.models.generate_videos(
                     model=_MODEL,
                     prompt=prompt_text,
                     config=types.GenerateVideosConfig(
-                        reference_images=refs if refs else None,
+                        reference_images=use_refs,
                         aspect_ratio="16:9",
                         resolution="720p",
                     ),
