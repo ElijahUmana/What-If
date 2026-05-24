@@ -19,10 +19,6 @@ Every football fan has said it: *"What if he'd passed instead of shooting?"* *"W
 
 The live match keeps playing. The what-if clip appears beside it. You can ask as many as you want. At full time, you walk away with a shareable reel of your counterfactuals.
 
-### Live Demo
-
-https://github.com/user-attachments/assets/demo-placeholder
-
 | Feature | What It Does |
 |---|---|
 | **Real-time match perception** | Continuously analyzes frames at 2fps, detecting events (goals, shots, fouls, saves, corners) with structured semantic memory |
