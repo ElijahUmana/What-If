@@ -187,6 +187,7 @@ async def _perception_loop(session_id: str, agent: IngestAgent) -> None:
     ring = agent.frame_ring
     last_caption_pts = 0
     last_summary_time = time.time()
+    last_commentary_time = 0.0
     frame_counter = 0
 
     while not agent._stop_event.is_set():
@@ -225,10 +226,37 @@ async def _perception_loop(session_id: str, agent: IngestAgent) -> None:
                     _debug_errors.append(err)
             last_caption_pts = current_pts
 
+        # --- Quick commentary from captions (every 3rd caption, no summary needed) ---
+        captions_list = state.captions.get(session_id, [])
+        if len(captions_list) >= 3 and time.time() - last_commentary_time >= 15:
+            last_commentary_time = time.time()
+            asyncio.create_task(_run_quick_commentary(session_id))
+
         # --- Summarise every 45 seconds (fire-and-forget, doesn't block captions) ---
         if time.time() - last_summary_time >= 45:
             last_summary_time = time.time()
             asyncio.create_task(_run_summary(session_id, agent, current_pts))
+
+
+async def _run_quick_commentary(session_id: str) -> None:
+    """Generate commentary from recent captions alone (no summary needed)."""
+    try:
+        captions_list = state.captions.get(session_id, [])
+        summaries_list = state.summaries.get(session_id, [])
+        ms = state.match_states.get(session_id, {})
+        recent_captions = captions_list[-5:]
+        line = await generate_commentary(
+            events=state.events.get(session_id, [])[-5:],
+            summaries=summaries_list[-3:] if summaries_list else [{"narrative": " | ".join(c.get("text", "") for c in recent_captions)}],
+            match_state=ms,
+            session_id=session_id,
+        )
+        if line:
+            commentary_entry = {"text": line, "timestamp": time.time()}
+            state.commentary.setdefault(session_id, []).append(commentary_entry)
+            await state.broadcast(session_id, "commentary.line", commentary_entry)
+    except Exception as e:
+        _debug_errors.append(f"Quick commentary error: {e}")
 
 
 async def _run_summary(session_id: str, agent: IngestAgent, current_pts: int) -> None:
