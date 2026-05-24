@@ -51,13 +51,7 @@ export default function TimelineScrubber({ events }: TimelineScrubberProps) {
   }, [events]);
 
   if (events.length === 0) {
-    return (
-      <div className="relative h-12 rounded-lg bg-gray-800/60 flex items-center justify-center">
-        <span className="text-xs text-gray-500">
-          No events detected yet
-        </span>
-      </div>
-    );
+    return <div className="relative h-12 rounded-lg bg-gray-800/60" />;
   }
 
   return (
